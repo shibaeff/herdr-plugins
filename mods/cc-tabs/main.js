@@ -31,6 +31,7 @@ const inboxCount = () =>
   agents().filter((a) => a.status === "blocked" || a.status === "done").length +
   (shared("cc.github")?.prs ?? []).filter((p) => p.ci === "fail").length +
   (shared("cc.github")?.reviews ?? []).length +
+  (shared("cc.github")?.notifications ?? []).length +
   (shared("cc.settings")?.slack?.enabled === false ? 0 : (shared("cc.slack")?.items ?? []).filter((s) => s.kind === "ask" && !s.ticked).length);
 
 function togglePanel(id) {

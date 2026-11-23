@@ -77,6 +77,15 @@ function snippet(text) {
 
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 
+// GitHub notifications worth an Inbox row: you were @-mentioned (or your team was), assigned, or someone answered
+// on a thread you opened or commented on. Review requests have their own rows; merges, closes and CI are left out.
+const NOTIF_REASONS = new Set(["mention", "team_mention", "comment", "author", "assign", "manual"]);
+const NOTIF_MAX = 25;
+// https://api.github.com/repos/o/r/pulls/12 → https://github.com/o/r/pull/12 (issues keep their path).
+const webUrl = (api) => api ? api.replace("https://api.github.com/repos/", "https://github.com/").replace(/\/pulls\/(\d+)$/, "/pull/$1") : null;
+const ghJson = (path) => exec("gh", ["api", path], { timeout: 20_000 })
+  .then((r) => (r.code === 0 ? JSON.parse(r.stdout) : null)).catch(() => null);
+
 export default class CcStatus extends View {
   init(_props, cx) {
     this.roots = {};
@@ -85,9 +94,13 @@ export default class CcStatus extends View {
     this.reviewsAt = 0;
     this.error = null;
     this.reading = new Set();
+    this.notifCache = new Map(); // "<thread id>|<updated_at>" → its latest comment or review (or null)
+    this.notifRead = new Set();  // threads marked read here, kept out until GitHub stops listing them
+    this.ghLogin = null;
     this.linearBusy = false;
     this.handled = { request: shared("cc.linear.request") ?? 0, move: shared("cc.linear.move")?.at ?? 0,
-      slackRequest: shared("cc.slack.request") ?? 0, slackAction: shared("cc.slack.action")?.at ?? 0 };
+      slackRequest: shared("cc.slack.request") ?? 0, slackAction: shared("cc.slack.action")?.at ?? 0,
+      githubAction: shared("cc.github.action")?.at ?? 0 };
     this.slackBusy = false;
     this.slackPath = `${appHome()}/data/cc-slack/state.json`;
     this.slackQueue = Promise.resolve();
@@ -445,6 +458,73 @@ export default class CcStatus extends View {
       this.handled.slackAction = sact.at;
       cx.spawn(async () => { await this.slackChange((st) => { apply(st, sact, Date.now()); }); });
     }
+    // Mark read from the Inbox: gone from the list at once, then marked read on GitHub too.
+    const gact = shared("cc.github.action");
+    if (gact?.at > this.handled.githubAction) {
+      this.handled.githubAction = gact.at;
+      const ids = new Set((gact.ids ?? []).map(String));
+      for (const id of ids) this.notifRead.add(id);
+      cx.spawn(async () => {
+        const gh = shared("cc.github") ?? {};
+        setShared("cc.github", { ...gh, notifications: (gh.notifications ?? []).filter((n) => !ids.has(n.id)) });
+        for (const id of ids) await exec("gh", ["api", "-X", "PATCH", `notifications/threads/${id}`], { timeout: 20_000 }).catch(() => null);
+      });
+    }
+  }
+
+  // Unread GitHub notifications that are about you, each with who answered last and what they said.
+  // Returns null when they're off in settings; throws when gh can't read them.
+  async notifications() {
+    if (!this.settings.github.notifications) return null;
+    this.ghLogin ??= (await ghJson("user"))?.login ?? null;
+    const r = await exec("gh", ["api", "notifications?participating=true&per_page=50"], { timeout: 20_000 });
+    if (r.code !== 0) throw new Error(r.stderr.trim().split("\n")[0] || "gh api notifications failed");
+    const list = JSON.parse(r.stdout);
+    const listed = new Set(list.map((n) => String(n.id)));
+    for (const id of this.notifRead) if (!listed.has(id)) this.notifRead.delete(id);
+    const out = [], keys = new Set();
+    for (const n of list) {
+      const id = String(n.id);
+      if (!n.unread || !NOTIF_REASONS.has(n.reason) || this.notifRead.has(id)) continue;
+      const key = `${id}|${n.updated_at}`;
+      keys.add(key);
+      if (!this.notifCache.has(key)) this.notifCache.set(key, await this.latestActivity(n));
+      const last = this.notifCache.get(key);
+      // You had the last word: nothing new from anyone else.
+      if (last?.who && last.who === this.ghLogin) continue;
+      out.push({
+        id, reason: n.reason, type: n.subject?.type ?? "", repo: n.repository?.full_name ?? "", title: n.subject?.title ?? "",
+        number: Number((n.subject?.url ?? "").match(/\/(\d+)$/)?.[1]) || null,
+        url: last?.url ?? webUrl(n.subject?.url) ?? n.repository?.html_url ?? "https://github.com/notifications",
+        who: last?.who ?? null, review: last?.review ?? null,
+        body: (last?.body ?? "").replace(/<!--[\s\S]*?-->/g, "").replace(/^\s*[#>]+\s*/gm, "").replace(/\*\*|`/g, "").replace(/\s+/g, " ").trim().slice(0, 200),
+        at: Date.parse(n.updated_at) || Date.now(),
+      });
+      if (out.length >= NOTIF_MAX) break;
+    }
+    for (const k of this.notifCache.keys()) if (!keys.has(k)) this.notifCache.delete(k);
+    return out;
+  }
+
+  // The newest comment on the thread, else (for a PR) its newest review; null if neither is newer than your last read.
+  async latestActivity(n) {
+    const seen = Date.parse(n.last_read_at ?? "") || 0;
+    const c = n.subject?.latest_comment_url;
+    if (c && /\/comments\/\d+$/.test(c)) {
+      const x = await ghJson(c);
+      const at = Date.parse(x?.created_at ?? "") || 0;
+      if (x && at > seen) return { who: x.user?.login ?? null, body: x.body ?? "", url: x.html_url ?? null, at };
+    }
+    if (n.subject?.type === "PullRequest" && n.subject.url) {
+      const reviews = await ghJson(`${n.subject.url}/reviews?per_page=100`);
+      const last = Array.isArray(reviews) ? reviews.filter((x) => x.submitted_at && x.state !== "PENDING").at(-1) : null;
+      const at = Date.parse(last?.submitted_at ?? "") || 0;
+      if (last && at > seen) {
+        const said = { APPROVED: "approved", CHANGES_REQUESTED: "requested changes", COMMENTED: "left review comments", DISMISSED: "review dismissed" }[last.state] ?? "";
+        return { who: last.user?.login ?? null, body: last.body || said, url: last.html_url ?? null, at, review: last.state };
+      }
+    }
+    return null;
   }
 
   async repoOf(cwd) {
@@ -495,8 +575,12 @@ export default class CcStatus extends View {
           reviews = JSON.parse(r.stdout).map((x) => ({ number: x.number, title: x.title, url: x.url, repo: x.repository?.nameWithOwner ?? "", author: x.author?.login ?? "" }));
           this.reviewsAt = Date.now();
         }
-        const next = { prs, reviews };
-        if (!same(next, { prs: prev.prs, reviews: prev.reviews })) setShared("cc.github", next);
+        // A failed notifications read keeps the last list and says why; PRs and reviews still update.
+        let notifications = prev.notifications ?? [], notificationsError = null;
+        try { notifications = (await this.notifications()) ?? []; }
+        catch (e) { notificationsError = String(e?.message ?? e).slice(0, 120); }
+        const next = { prs, reviews, notifications, notificationsError };
+        if (!same(next, { prs: prev.prs, reviews: prev.reviews, notifications: prev.notifications, notificationsError: prev.notificationsError ?? null })) setShared("cc.github", next);
         this.error = null;
       } catch (e) {
         this.error = String(e?.message ?? e).slice(0, 120);

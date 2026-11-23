@@ -76,7 +76,9 @@ export default class Settings extends View {
           `About ${money(cost.total)} a day in Claude runs at these settings` +
           ` (Slack ${money(cost.slack)}, Linear ${money(cost.linear)}, standup ${money(cost.standup)}). Task summaries add 1–2¢ per agent turn that changes code.`)))
       .child(v_flex().id("cc-settings-body").flex_1().min_h(0).overflow_y_scrollbar().px(20).py(14).gap(12)
-        .child(card("gh", "GitHub", "PR checks for your spaces' branches and review requests, through gh. Free.", d.github.enabled, () => { d.github.enabled = !d.github.enabled; }, [
+        .child(card("gh", "GitHub", "PR checks for your spaces' branches, review requests, mentions and replies, through gh. Free.", d.github.enabled, () => { d.github.enabled = !d.github.enabled; }, [
+          row("Mentions and replies", toggle("gh-notif", d.github.notifications !== false, () => { d.github.notifications = d.github.notifications === false; }),
+            "Unread GitHub notifications; Mark read clears them on GitHub"),
           row("Check every", seg("gh-every", [3, 5, 10].map((m) => ({ id: m, label: `${m} min` })), d.github.everyMin, (v) => { d.github.everyMin = v; })),
           row("Review requests", seg("gh-rev", [{ id: "direct", label: "Asked of me" }, { id: "all", label: "Including my teams" }], d.github.reviews, (v) => { d.github.reviews = v; })),
         ]))

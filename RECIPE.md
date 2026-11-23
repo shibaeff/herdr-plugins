@@ -17,7 +17,7 @@ them; a summary of each task; a Board of all work; a standup draft; and Claude C
 - **Side panel**, 392 px (280–900), one panel at a time:
   - **Inbox**: filter chips (All, Agents, Slack, GitHub), a Slack sweep line (time swept, next, Check now), then
     sections NEEDS YOU NOW, REVIEW, NEW FOR YOU. Each row: a 50 px kind tag (AGENT `blocked`, DONE `done`, SLACK
-    `working`, CI `blocked`, PR `accent`), title, age, body, and buttons. A blocked agent's body is its screen's
+    `working`, CI `blocked`, PR `accent`, MENTION `accent`, REPLY `working`, REVIEW by state), title, age, body, and buttons. A blocked agent's body is its screen's
     question and options. At the foot, the standup: "Standup for Monday · Written 23:00 · next 11:00", Copy, Write now.
   - **Linear**: "My issues", groups by state (started first, Backlog folded), rows with ID, title, Urgent/High,
     and either the linked space › tab with its agent status and PR checks, or **Start**.
@@ -65,7 +65,7 @@ them; a summary of each task; a Board of all work; a standup draft; and Claude C
   before `sidebar-footer`. Shipped mods kept: `workspace-chrome`, `spaces`, `agents`, `pane`, `files`, `changes`,
   `worktree`, `menu`, `new-menu`.
 - `cc-status` is the only fetcher, on a one-minute `cx.timer`: `gh pr view` per local space's branch, `gh search
-  prs`, `hc read` when an agent becomes blocked, headless `claude -p` runs (`--json-schema`, read-only tool
+  prs`, `gh api notifications?participating=true` (mentions, replies; Mark read PATCHes the thread), `hc read` when an agent becomes blocked, headless `claude -p` runs (`--json-schema`, read-only tool
   lists) for Linear, the Slack sweep, the standup and standup edits, the Claude usage endpoint with Claude Code's
   Keychain login, and Codex's newest session log. It writes shared state (`cc.github`, `cc.snippets`,
   `cc.linear`, `cc.slack`, `cc.standup`, `cc.usage`, `cc.settings`); every other mod only reads, and sends changes

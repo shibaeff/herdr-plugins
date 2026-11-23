@@ -23,6 +23,17 @@ const clock = (ms) => new Date(ms).toTimeString().slice(0, 5);
 const openUrl = (url) => url && exec("open", [url]);
 const CLOSED = { you: "done", sweep: "you replied", skipped: "skipped" };
 const slackAction = (op, ids) => setShared("cc.slack.action", { op, ids, at: Date.now() });
+const markRead = (ids) => setShared("cc.github.action", { op: "read", ids, at: Date.now() });
+
+// A GitHub notification's tag, colour and verb: "infraopic replied", "guglez requested changes".
+// On a mention thread, `who` is whoever acted last, which may be a later review rather than the mention itself.
+function notifLook(n) {
+  const review = { CHANGES_REQUESTED: ["blocked", "requested changes"], APPROVED: ["done", "approved"] }[n.review] ?? (n.review ? ["working", "reviewed"] : null);
+  if (n.reason === "mention" || n.reason === "team_mention") return ["MENTION", "accent", review?.[1] ?? (n.reason === "team_mention" ? "mentioned your team" : "mentioned you")];
+  if (n.reason === "assign") return ["ASSIGN", "accent", review?.[1] ?? "assigned you"];
+  if (review) return ["REVIEW", ...review];
+  return ["REPLY", "working", "replied"];
+}
 
 export default class Inbox extends View {
   init(_props, cx) {
@@ -85,6 +96,15 @@ export default class Inbox extends View {
       out.push({ key: `ci-${p.url}`, group: "github", section: 1, kind: "CI", tone: "blocked", open: () => openUrl(p.url),
         title: `#${p.number} failed: ${p.failed.map((f) => f.name).slice(0, 2).join(", ")}`, body: `${p.spaceName} · ${p.title}`,
         actions: [{ label: "Fix CI", primary: true, run: () => this.fixCi(p) }, { label: "Logs", run: () => openUrl(p.failed[0]?.url ?? p.url) }] });
+    }
+    // Mentions and answers on your threads (cc-status reads GitHub's notifications). Mark read clears it on GitHub too.
+    for (const n of gh.notifications ?? []) {
+      const [kind, tone, verb] = notifLook(n);
+      const where = `${n.repo.split("/").pop()}${n.number ? `#${n.number}` : ""}`;
+      out.push({ key: `gn-${n.id}`, group: "github", section: 1, kind, tone, time: n.at, open: () => openUrl(n.url),
+        title: n.who ? `${n.who} ${verb} · ${where}` : `New activity · ${where}`,
+        body: `${n.title}${n.body ? ` — “${n.body}”` : ""}`,
+        actions: [{ label: "Mark read", run: () => markRead([n.id]) }] });
     }
     for (const r of gh.reviews ?? []) {
       out.push({ key: `rv-${r.url}`, group: "github", section: 1, kind: "PR", tone: "accent", open: () => openUrl(r.url),
@@ -161,6 +181,9 @@ export default class Inbox extends View {
           .child(div().text_size(11).text_color(t.dim).child(`${all.length} open`)))
         .child(h_flex().gap(4).flex_wrap().children(FILTERS.filter((f) => f.id !== "slack" || slackOn).map(chip))))
       // Slack not connected: say how to connect it, or turn the sweep off, instead of a red error.
+      .when(Boolean(shared("cc.github")?.notificationsError) && (filter === "all" || filter === "github"), (el) => el.child(div().flex_none().px(14).py(6)
+        .border_b(1).border_color(t.border).bg(t.raised).text_size(11.5).text_color(t.blocked).truncate()
+        .child(`Couldn't read GitHub notifications: ${shared("cc.github").notificationsError}`)))
       .when(slackOn && Boolean(slack.notConnected) && (filter === "all" || filter === "slack"), (el) => el.child(v_flex().flex_none().px(14).py(10).gap(6)
         .border_b(1).border_color(t.border).bg(t.raised)
         .child(div().text_size(12.5).font_medium().child("Connect Slack to see asks for you"))
