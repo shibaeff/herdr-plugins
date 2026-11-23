@@ -116,6 +116,26 @@ Usage: Claude Code's numbers come from the usage endpoint `/usage` uses, with Cl
 Keychain (read only, never refreshed or stored), every 3 minutes, backing off to 15 after failures. Codex's come from
 the newest session log under `~/.codex/sessions`, so they update when Codex runs.
 
+## Activity log
+
+Files only, on this Mac, in `~/.config/herdr-app/data/cc-activity/` (off with `"activity": {"enabled": false}` in
+`command-center.json`). cc-status writes:
+
+- `YYYY-MM-DD.jsonl`, one event per line:
+  - `focus`, every minute: the front app, whether Herdr is focused, Herdr's focused space / repo / branch / tab / program,
+    idle seconds (away after 5 minutes without input).
+  - `agent`: an agent in Herdr appeared, changed status (working, blocked, done, idle) or went away, with its program,
+    space, tab and folder.
+  - `prompt`: a message you sent to Claude Code or Codex in any terminal, read from their session logs every 10 minutes:
+    project, branch, permission mode, slash command, length, and the first 500 characters. Injected messages are skipped.
+  - `usage`: tokens per Claude Code / Codex session since the last scan (input, output, cache read/write, model).
+- `YYYY-MM-DD.summary.json`, rewritten hourly (yesterday's once after midnight): active / away minutes, minutes per app,
+  project and space, time looking at agents, agent runs per program, minutes agents worked and waited on you, how fast
+  you answered them (median), prompts per agent / project / hour / slash command, and tokens per agent and project.
+- `state.json`: where each session log was last read. Only lines written after the first run are imported.
+
+`herdr-app do cc-status.activity` scans and summarizes right away.
+
 ## Task notes
 
 `mods/cc-tasks/cc-task.mjs` decides where a task's notes live: `<repo>/.agents/tasks/<ISSUE>.md` when the branch belongs

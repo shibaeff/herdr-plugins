@@ -2,7 +2,7 @@
 
 import { View, div, svg } from "gpui-kit";
 import { h_flex } from "gpui-base";
-import { spaces, agents, panes, theme, run, exec, hc, keys, window, shared, setShared, home, appHome, notify, nextCommand, layout, openOverlay } from "herdr";
+import { spaces, agents, panes, focused, theme, run, exec, hc, keys, window, shared, setShared, home, appHome, notify, nextCommand, layout, openOverlay } from "herdr";
 import { SLACK_TIMEOUT, SLACK_TOOLS, SLACK_SCHEMA, slackPrompt, loadState, saveState, merge, apply, publish } from "./slack.js";
 import { STANDUP_TIMEOUT, STANDUP_TOOLS, STANDUP_SCHEMA, ASK_SCHEMA, windowFor, gatherLocal, standupPrompt, standupSlot,
   toBullets, toText, remember, applyEdit, askPrompt, applyAsk } from "./standup.js";
@@ -10,6 +10,7 @@ import * as fs from "fs/promises";
 import { USAGE_EVERY, claudeUsage, codexUsage, backoff } from "./usage.js";
 import { SLACKAPP_EVERY, loadAppState, saveAppState, poll, applyApp, publishApp, needsLink, resolvePrompt, parseResolved, applyResolved, RESOLVE_TOOLS } from "./slackapp.js";
 import { withDefaults, patch, loadSettings, saveSettings, inHours } from "./settings.js";
+import * as activity from "./activity.js";
 
 // Claude Code lists connectors that need a sign-in here: a free way to know Linear or Slack isn't connected
 // before paying for a run that would find out. Not an official interface, so it's only a hint.
@@ -129,10 +130,16 @@ export default class CcStatus extends View {
       this.publishStandup({ running: false, asking: false });
       this.tick(cx);
       this.slackApp(cx);
+      this.activityFocus(cx);
+      this.activitySessions(cx);
     });
     cx.timer.every(60_000, (cx) => this.tick(cx));
     // The Slack app's notifications: free, so every 20 seconds (macOS drops them once cleared).
     cx.timer.every(SLACKAPP_EVERY, (cx) => this.slackApp(cx));
+    // Activity log (files only, data/cc-activity): focus each minute, session logs every 10 minutes, summaries hourly.
+    this.agentSnap = null;
+    cx.timer.every(activity.FOCUS_EVERY, (cx) => this.activityFocus(cx));
+    cx.timer.every(activity.SESSIONS_EVERY, (cx) => this.activitySessions(cx));
     // `herdr-app do cc-status.linear` / `cc-status.github`: check now.
     cx.spawn(async (cx) => {
       for (;;) {
@@ -142,6 +149,7 @@ export default class CcStatus extends View {
         if (c === "slack") this.slack(cx, true);
         if (c === "standup") this.standup(cx);
         if (c === "usage") this.usage(cx, true);
+        if (c === "activity") { this.activitySessions(cx); cx.spawn(async () => { await activity.summarize(activity.today()); }); }
         if (c === "settings") openOverlay({ mod: "cc-settings", kind: "dialog", width: 640, height: 0.85 });
         cx.notify();
       }
@@ -335,6 +343,42 @@ export default class CcStatus extends View {
       "-p", prompt, "--model", model, "--tools", "ToolSearch", "--allowedTools", tools.join(","),
       "--output-format", "json", "--no-session-persistence", "--max-budget-usd", budget, ...extra,
     ], { cwd: dir, timeout }));
+  }
+
+  activityOn() { return !this.settings.demo && this.settings.activity?.enabled !== false; }
+
+  activityFocus(cx) {
+    if (!this.activityOn()) return;
+    cx.spawn(async () => {
+      try {
+        await activity.log(await activity.focusSample({ focused: focused(), spaces: spaces(), panes: panes(), window: window(), repoOf: (c) => this.repoOf(c) }));
+        // Summaries: today's every hour, and yesterday's once after midnight.
+        const hour = new Date().getHours();
+        if (hour !== this.summaryHour) {
+          if (this.summaryHour !== undefined && hour < this.summaryHour) await activity.summarize(activity.yesterday());
+          this.summaryHour = hour;
+          await activity.summarize(activity.today());
+        }
+      } catch (e) { console.log("cc-status activity focus:", e); }
+    });
+  }
+
+  activitySessions(cx) {
+    if (!this.activityOn() || this.sessionsBusy) return;
+    this.sessionsBusy = true;
+    cx.spawn(async () => {
+      try { await activity.scanSessions(); } catch (e) { console.log("cc-status activity sessions:", e); }
+      this.sessionsBusy = false;
+    });
+  }
+
+  // Agent status changes, logged as they happen (render runs on every change to agents()).
+  activityAgents() {
+    if (!this.activityOn()) return;
+    const { events, next } = activity.agentChanges(this.agentSnap ?? {}, agents(), panes());
+    // The first look only learns who's there, so a reload doesn't log every agent as new.
+    if (this.agentSnap) activity.log(events);
+    this.agentSnap = next;
   }
 
   // Reads, changes and writes the Slack app feed one at a time; call from inside a cx.spawn task.
@@ -713,6 +757,7 @@ export default class CcStatus extends View {
   }
 
   render(cx) {
+    this.activityAgents();
     this.syncSnippets(cx);
     this.syncRequests(cx);
     const t = theme();

@@ -11,6 +11,7 @@ export const DEFAULTS = {
   slack: { enabled: false, everyMin: 60, hours: [9, 19], model: "sonnet", app: true }, // app: the Slack app feed (free)
   standup: { enabled: false, times: [23], weekdaysOnly: true, cutover: 18, model: "sonnet" },
   usage: { claude: true, codex: true },
+  activity: { enabled: true }, // activity log in data/cc-activity (files only)
   demo: false, // sample data and no fetching, for scripts/preview.mjs
 };
 
