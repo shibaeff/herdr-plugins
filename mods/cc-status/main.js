@@ -8,7 +8,7 @@ import { STANDUP_TIMEOUT, STANDUP_TOOLS, STANDUP_SCHEMA, ASK_SCHEMA, windowFor, 
   toBullets, toText, remember, applyEdit, askPrompt, applyAsk } from "./standup.js";
 import * as fs from "fs/promises";
 import { USAGE_EVERY, claudeUsage, codexUsage, backoff } from "./usage.js";
-import { SLACKAPP_EVERY, loadAppState, saveAppState, poll, applyApp, publishApp } from "./slackapp.js";
+import { SLACKAPP_EVERY, loadAppState, saveAppState, poll, applyApp, publishApp, needsLink, resolvePrompt, parseResolved, applyResolved, RESOLVE_TOOLS } from "./slackapp.js";
 import { withDefaults, patch, loadSettings, saveSettings, inHours } from "./settings.js";
 
 // Claude Code lists connectors that need a sign-in here: a free way to know Linear or Slack isn't connected
@@ -360,12 +360,40 @@ export default class CcStatus extends View {
     if (this.settings.demo || this.settings.slack.app === false || this.appBusy) return;
     this.appBusy = true;
     cx.spawn(async (cx) => {
+      let unlinked = [];
       await this.appChange(async (st) => {
-        try { await poll(st, Date.now()); return { error: null, at: Date.now() }; }
+        try { await poll(st, Date.now()); unlinked = st.items.filter(needsLink).slice(-10); return { error: null, at: Date.now() }; }
         catch (e) { return { error: String(e?.message ?? e).slice(0, 160) }; }
       });
       this.appBusy = false;
+      if (unlinked.length) this.resolveSlackLinks(cx, unlinked);
       cx.notify();
+    });
+  }
+
+  // Links for live items in channels or DMs not seen before: one Haiku run (about 1¢) searches Slack for each message
+  // and the channel ID and permalink are taken from the search results by message timestamp, not from the model's words.
+  // Each channel is looked up once; at most one lookup every 2 minutes; an item is given up on after 3 tries.
+  resolveSlackLinks(cx, items) {
+    if (this.resolving || Date.now() - (this.resolvedAt ?? 0) < 120_000) return;
+    this.resolving = true;
+    this.resolvedAt = Date.now();
+    cx.spawn(async (cx) => {
+      try {
+        const dir = `${appHome()}/data/cc-claude`;
+        await exec("mkdir", ["-p", dir]);
+        const r = await exec("/usr/bin/env", ["MCP_CONNECTION_NONBLOCKING=false", `${home()}/.local/bin/claude`, "-p", resolvePrompt(items),
+          "--model", "haiku", "--tools", "ToolSearch", "--allowedTools", RESOLVE_TOOLS.join(","), "--output-format", "stream-json", "--verbose",
+          "--no-session-persistence", "--max-budget-usd", "0.2"], { cwd: dir, timeout: 180_000 });
+        const found = parseResolved(r.stdout ?? "");
+        const keys = new Set(items.map((x) => x.key));
+        await this.appChange((st) => { applyResolved(st, st.items.filter((x) => keys.has(x.key)), found); });
+      } catch (e) {
+        console.log("cc-status slack links:", e);
+      } finally {
+        this.resolving = false;
+        cx.notify();
+      }
     });
   }
 

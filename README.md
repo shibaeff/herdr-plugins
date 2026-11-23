@@ -82,7 +82,10 @@ database every 20 seconds (`sqlite3` read-only + `plutil`), keeps them in `data/
 them once cleared) and shows them as LIVE rows in the Slack panel and Inbox, with Hand to agent and Done. It needs Full
 Disk Access for Herdr.app (System Settings → Privacy & Security); terminals run under Herdr Core and don't get it.
 It sees only what Slack notifies (not while Slack is focused, muted, or silenced by Focus), and notifications carry no
-channel ID, so a click opens the Slack app on the workspace rather than the message. A private macOS format: if it
+channel ID: the first time a channel (or DM sender) shows up, one Haiku run (about 1¢) searches Slack for the message and
+takes its channel ID and permalink from the search results, matched by message timestamp; after that links for that
+channel are built locally. A click opens the message in the Slack app (`slack://channel?team&id&message&thread_ts`),
+and Copy link copies the https permalink. A private macOS format: if it
 changes, the feed stops adding items. Toggle: Settings → Slack app feed.
 
 Headless runs start with `MCP_CONNECTION_NONBLOCKING=false`: without it `claude -p` begins before the claude.ai

@@ -89,7 +89,8 @@ export default class Inbox extends View {
       .filter((x) => !x.ts || !swept.some((p) => p.includes(`p${x.ts.replace(".", "")}`)))
       .map((x) => ({
         key: `sa-${x.key}`, group: "slack", kind: "LIVE", tone: "working", section: 2, time: x.at, ticked: x.ticked, live: true,
-        open: () => openSlackApp(x.team),
+        // Linked once its channel is known (cc-status looks it up): opens the message in the Slack app.
+        open: () => (x.open ? exec("open", [x.open]) : openSlackApp(x.team)), link: x.link ?? null,
         title: `${x.from}${x.channel === "DM" ? " · DM" : ` in ${x.channel}`}${x.ticked ? " · done" : ""}`, body: x.text,
         actions: x.ticked ? [{ label: "Undo", run: () => appAction("untick", [x.key]) }]
           : [{ label: "Hand to agent", run: () => this.handToAgent({ from: x.from, channel: x.channel, text: x.text, permalink: "" }) },

@@ -23,7 +23,71 @@ for id in "$@"; do
   printf '{"rec":%s,"req":%s}\\n' "$id" "$r"
 done`;
 
-export const emptyAppState = () => ({ seen: [], items: [] });
+export const emptyAppState = () => ({ seen: [], items: [], channels: {}, domain: null });
+
+// Links. A notification has the workspace and message timestamp but not the channel, so the channel ID is looked up
+// once per channel (or DM sender) through the Slack connector and kept in state.channels; after that the link is
+// built here for free. slack:// opens the message in the desktop app; the https permalink is what Copy link copies.
+const where = (x) => (x.channel === "DM" ? `dm:${x.from}` : x.channel);
+export function linkFor(state, x) {
+  const cid = state.channels?.[where(x)];
+  if (!cid || !x.ts) return null;
+  return {
+    channelId: cid,
+    open: `slack://channel?team=${x.team}&id=${cid}&message=${x.ts}${x.threadTs ? `&thread_ts=${x.threadTs}` : ""}`,
+    link: state.domain ? `https://${state.domain}.slack.com/archives/${cid}/p${x.ts.replace(".", "")}${x.threadTs ? `?thread_ts=${x.threadTs}&cid=${cid}` : ""}` : null,
+  };
+}
+export const needsLink = (x) => !x.channelId && x.ts && (x.tries ?? 0) < 3;
+
+export const RESOLVE_TOOLS = ["ToolSearch", "mcp__claude_ai_Slack__slack_search_public_and_private"];
+const day = (ms) => { const d = new Date(ms); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; };
+// A search per message: a few of its words, its channel, its day. Quotes and modifiers stripped from the words.
+export function resolvePrompt(items) {
+  const q = (x) => {
+    const words = x.text.replace(/["“”<>@#*`]/g, " ").replace(/\b\w+:/g, " ").split(/\s+/).filter(Boolean).slice(0, 8).join(" ");
+    return `"${words}"${x.channel.startsWith("#") ? ` in:${x.channel}` : ""} on:${day(x.at)}`;
+  };
+  return `Load the Slack search tool with ToolSearch, then call slack_search_public_and_private once for each query below, with limit 5 and include_context false. Read only: never post, react or change anything. Reply with just: done.
+${items.map((x) => `- ${q(x)}`).join("\n")}`;
+}
+
+// The search results in the run's stream, matched to items by message timestamp: { ts: {channelId, permalink, threadTs} }.
+export function parseResolved(stdout) {
+  const out = {};
+  for (const line of stdout.split("\n")) {
+    let m;
+    try { m = JSON.parse(line); } catch { continue; }
+    for (const c of Array.isArray(m.message?.content) ? m.message.content : []) {
+      if (c.type !== "tool_result") continue;
+      let text = typeof c.content === "string" ? c.content : (c.content ?? []).map((x) => x.text ?? "").join("");
+      try { text = JSON.parse(text).results ?? text; } catch { /* plain text */ }
+      for (const block of String(text).split(/### Result/)) {
+        const ts = block.match(/Message_ts:\s*([\d.]+)/)?.[1];
+        const cid = block.match(/Channel:[^\n]*\(ID:\s*([A-Z0-9]+)\)/)?.[1];
+        const link = block.match(/Permalink:\s*\[link\]\((https:[^)\s]+)\)/)?.[1]?.replace(/\\\//g, "/");
+        if (ts && cid) out[ts] = { channelId: cid, permalink: link ?? null, threadTs: link?.match(/thread_ts=([\d.]+)/)?.[1] ?? null };
+      }
+    }
+  }
+  return out;
+}
+
+// Folds a lookup into state: remembers each channel, links every item in it.
+export function applyResolved(state, asked, found) {
+  state.channels ??= {};
+  for (const x of asked) {
+    x.tries = (x.tries ?? 0) + 1;
+    const f = found[x.ts];
+    if (!f) continue;
+    state.channels[where(x)] = f.channelId;
+    const domain = f.permalink?.match(/^https:\/\/([\w-]+)\.slack\.com\//)?.[1];
+    if (domain) state.domain = domain;
+    x.threadTs = f.threadTs;
+  }
+  for (const x of state.items) if (!x.channelId) Object.assign(x, linkFor(state, x) ?? {});
+  for (const x of asked) { const f = found[x.ts]; if (f?.permalink) x.link = f.permalink; }
+}
 
 export async function loadAppState(path) {
   try { return { ...emptyAppState(), ...JSON.parse(await fs.readFile(path, "utf8")) }; } catch { return emptyAppState(); }
@@ -72,6 +136,7 @@ export async function poll(state, now) {
       const req = byRec.get(r.id);
       if (!req) continue;
       const item = { key: req.iden || r.key, ...parse(req), at: Number.isFinite(r.at) ? r.at : now, ticked: false, tickedAt: null };
+      Object.assign(item, linkFor(state, item) ?? {});
       if (state.items.some((x) => x.key === item.key)) continue;
       state.items.push(item);
       added.push(item);
