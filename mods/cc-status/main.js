@@ -96,6 +96,7 @@ export default class CcStatus extends View {
     this.reading = new Set();
     this.notifCache = new Map(); // "<thread id>|<updated_at>" → its latest comment or review (or null)
     this.notifRead = new Set();  // threads marked read here, kept out until GitHub stops listing them
+    this.mergedPrs = new Set();  // PR API URLs known to be merged (merging is final, so never asked again)
     this.ghLogin = null;
     this.linearBusy = false;
     this.handled = { request: shared("cc.linear.request") ?? 0, move: shared("cc.linear.move")?.at ?? 0,
@@ -486,6 +487,8 @@ export default class CcStatus extends View {
     for (const n of list) {
       const id = String(n.id);
       if (!n.unread || !NOTIF_REASONS.has(n.reason) || this.notifRead.has(id)) continue;
+      // Activity on a merged PR is history, not something to answer.
+      if (n.subject?.type === "PullRequest" && await this.prMerged(n.subject.url)) continue;
       const key = `${id}|${n.updated_at}`;
       keys.add(key);
       if (!this.notifCache.has(key)) this.notifCache.set(key, await this.latestActivity(n));
@@ -504,6 +507,15 @@ export default class CcStatus extends View {
     }
     for (const k of this.notifCache.keys()) if (!keys.has(k)) this.notifCache.delete(k);
     return out;
+  }
+
+  // Whether a PR is merged; open PRs are asked again on every refresh, since they may merge at any time.
+  async prMerged(url) {
+    if (!url) return false;
+    if (this.mergedPrs.has(url)) return true;
+    const pr = await ghJson(url);
+    if (pr?.merged) { this.mergedPrs.add(url); return true; }
+    return false;
   }
 
   // The newest comment on the thread, else (for a PR) its newest review; null if neither is newer than your last read.

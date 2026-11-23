@@ -68,7 +68,7 @@ and `main`/`master` branches are skipped.
 Mentions and replies: on the same schedule, `gh api notifications?participating=true` lists unread threads where you
 were @-mentioned (or your team), assigned, or someone answered on a PR or issue you opened or commented on. Each row
 shows who acted last and what they said (one `gh api` call per new comment or review, cached). Review requests,
-merges, closes and CI notifications are left out; threads where you had the last word are skipped. **Mark read**
+merges, closes and CI notifications are left out; threads where you had the last word, and activity on merged PRs, are skipped. **Mark read**
 marks the thread read on GitHub. Turn it off with Settings → GitHub → Mentions and replies. Click the GitHub time in the status bar to check now.
 
 Linear is read through the claude.ai Linear connector: a headless `claude -p` (read-only tools, $0.50 cap) on the
