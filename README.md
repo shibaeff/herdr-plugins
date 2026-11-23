@@ -53,6 +53,7 @@ paying to fail; a free check of Claude Code's own "needs sign-in" list catches m
 | `cc-tabs` | tab bar | Herdr's tab bar, with a Terminals | Board toggle (⌘⌥1, ⌘⌥2) and Inbox · Linear · Tasks · Files · Changes buttons (⌘⌥I, ⌘⌥L, ⌘⌥T), the Inbox count and each tab's Linear issue |
 | `cc-board` | center (stack with the terminals) | One card per piece of work (agent, Linear issue and PR joined by branch) in Needs you, In progress, In review and Todo; filters by the Start dialog's folders; click selects the tab and shows Tasks, Open goes to the terminal, plus Fix CI, PR, Start and Linear |
 | `cc-inbox` | side panel | Blocked agents with their prompt, finished agents, Slack asks, failed CI on your branches' PRs (Fix CI starts Claude with `/fix-ci`), PRs that request your review directly, GitHub mentions and replies on your threads (Mark read clears them on GitHub), Copy link on every row that points to a PR, comment or Slack thread; the standup draft at its foot |
+| Slack panel | side panel | `cc-inbox` with `props: {only: "slack"}`: the Slack asks, FYIs and today's closed ones on their own, with Check now (⌘⌥S). Shown while the Slack sweep is on |
 | `cc-linear` | side panel | Your open Linear issues by state, each linked to the space and tab on its branch, with agent status and PR checks; Start on unlinked ones |
 | `cc-start` | dialog | Start from issue: a new worktree on Linear's branch name, next to the repo as `<repo>-<issue id>` (or a tab), Claude in plan, auto or ask-first mode, the whole issue as its first message (description and comments, read from Linear as the dialog opens: about 10 s and half a cent), and optionally move the issue to In Progress |
 | `cc-tasks` | side panel | For each tab of the shown space: goal, plan, decisions, assumptions, what's not done (from `.agents/tasks/`), plus changed files, commits and PR checks from git; a red box when the agent is waiting on you |
@@ -75,6 +76,9 @@ Linear is read through the claude.ai Linear connector: a headless `claude -p` (r
 schedule in settings, or when you click refresh. Moving an issue to In
 Progress is a second run with Linear's update tools, only when you tick it in Start from issue. The runs work in
 `~/.config/herdr-app/data/cc-claude` and keep no session.
+
+Headless runs start with `MCP_CONNECTION_NONBLOCKING=false`: without it `claude -p` begins before the claude.ai
+connectors connect and sees no Slack or Linear tools, so every run reports "not connected".
 
 Slack: a headless sweep of your DMs and @-mentions since the last sweep, on the schedule in settings, or Check now
 in the Inbox. Read-only Slack tools only; it never posts. It also marks earlier

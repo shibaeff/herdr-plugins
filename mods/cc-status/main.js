@@ -322,7 +322,9 @@ export default class CcStatus extends View {
 
   claude(prompt, tools, extra, timeout, model = "haiku", budget = "0.5") {
     const dir = `${appHome()}/data/cc-claude`;
-    return exec("mkdir", ["-p", dir]).then(() => exec(`${home()}/.local/bin/claude`, [
+    // MCP_CONNECTION_NONBLOCKING=false: in -p mode the turn otherwise starts before the claude.ai connectors
+    // (Slack, Linear) connect, and the run sees no Slack or Linear tools at all.
+    return exec("mkdir", ["-p", dir]).then(() => exec("/usr/bin/env", ["MCP_CONNECTION_NONBLOCKING=false", `${home()}/.local/bin/claude`,
       "-p", prompt, "--model", model, "--tools", "ToolSearch", "--allowedTools", tools.join(","),
       "--output-format", "json", "--no-session-persistence", "--max-budget-usd", budget, ...extra,
     ], { cwd: dir, timeout }));

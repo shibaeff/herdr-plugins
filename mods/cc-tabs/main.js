@@ -5,6 +5,7 @@ import { spaces, panes, agents, run, openOverlay, theme, window, shared, layout,
 // Cloned from Herdr's `tabs` (0.1.15): the side-panel buttons are ours.
 const PANELS = [
   { id: "inbox", label: "Inbox", icon: "mods/cc-tabs/inbox.svg" },
+  { id: "slack", label: "Slack", icon: "mods/cc-tabs/slack.svg" },
   { id: "linear", label: "Linear", icon: "mods/cc-tabs/linear.svg" },
   { id: "tasks", label: "Tasks", icon: "mods/cc-tabs/tasks.svg" },
   { id: "files", label: "Files", icon: "mods/files/file.svg" },
@@ -158,8 +159,9 @@ export default class Tabs extends View {
         .on_size_change((_size, cx) => { if (active >= 0) { this.scroll.scroll_to_item(active); cx.notify(); } })
         .children(shown.map(item)))
       .child(button("tab-new", "+", () => openOverlay({ mod: "new-menu", kind: "popup", width: 250, height: 512 })))
-      // "I don't use Linear" (settings) hides its button.
-      .children(PANELS.filter((p) => p.id !== "linear" || shared("cc.settings")?.linear?.enabled !== false).map(panelButton))
+      // "I don't use Linear" (settings) hides its button; Slack shows only while its sweep is on.
+      .children(PANELS.filter((p) => (p.id !== "linear" || shared("cc.settings")?.linear?.enabled !== false)
+        && (p.id !== "slack" || shared("cc.settings")?.slack?.enabled === true)).map(panelButton))
       .when(w?.buttons, el => el.child(button("minimize", w.platform === "windows" ? svg("mods/tabs/win-min.svg").size(16) : "−", () => run("window.minimize")))
         .child(button("maximize", w.platform === "windows" ? svg(`mods/tabs/${w.maximized ? "win-restore" : "win-max"}.svg`).size(16) : "□", () => run("window.maximize")))
         .child(button("close-window", w.platform === "windows" ? svg("mods/tabs/win-close.svg").size(16) : svg("mods/pane/close.svg").size(13), () => run("window.close"))));

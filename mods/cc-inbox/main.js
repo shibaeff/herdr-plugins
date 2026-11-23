@@ -3,7 +3,7 @@
 
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { agents, spaces, panes, shared, setShared, theme, run, exec, knownAgents, openOverlay } from "herdr";
+import { agents, spaces, panes, shared, setShared, theme, run, exec, knownAgents, openOverlay, props } from "herdr";
 
 const FILTERS = [
   { id: "all", label: "All" },
@@ -48,7 +48,9 @@ export default class Inbox extends View {
     });
   }
 
-  get filter() { return shared("cc.inbox.filter") ?? "all"; }
+  // props { only: "slack" }: the Slack panel, the same rows locked to Slack, without filters or the standup footer.
+  get slackOnly() { return props()?.only === "slack"; }
+  get filter() { return this.slackOnly ? "slack" : shared("cc.inbox.filter") ?? "all"; }
 
   fixCi(p) {
     const failed = p.failed[0];
@@ -189,9 +191,11 @@ export default class Inbox extends View {
     return v_flex().id("cc-inbox").size_full().min_h(0).rounded(10).overflow_hidden().bg(t.background).border_1().border_color(t.border).text_color(t.foreground).text_size(13)
       .child(v_flex().flex_none().px(14).pt(10).pb(8).gap(8).border_b(1).border_color(t.border)
         .child(h_flex().gap(8).items_center()
-          .child(div().font_semibold().child("Inbox"))
-          .child(div().text_size(11).text_color(t.dim).child(`${all.length} open`)))
-        .child(h_flex().gap(4).flex_wrap().children(FILTERS.filter((f) => f.id !== "slack" || slackOn).map(chip))))
+          .child(div().font_semibold().child(this.slackOnly ? "Slack" : "Inbox"))
+          .child(div().text_size(11).text_color(t.dim).child(this.slackOnly
+            ? `${this.slackItems().filter((i) => i.ask && !i.ticked).length} waiting on you`
+            : `${all.length} open`)))
+        .when(!this.slackOnly, (el) => el.child(h_flex().gap(4).flex_wrap().children(FILTERS.filter((f) => f.id !== "slack" || slackOn).map(chip)))))
       // Slack not connected: say how to connect it, or turn the sweep off, instead of a red error.
       .when(Boolean(shared("cc.github")?.notificationsError) && (filter === "all" || filter === "github"), (el) => el.child(div().flex_none().px(14).py(6)
         .border_b(1).border_color(t.border).bg(t.raised).text_size(11.5).text_color(t.blocked).truncate()
@@ -213,7 +217,7 @@ export default class Inbox extends View {
         .when(body.length === 0, (el) => el.child(v_flex().p(24).gap(4).items_center()
           .child(div().text_color(t.muted).child(filter === "slack" ? "No Slack asks waiting on you" : "Nothing needs you"))
           .child(div().text_size(11.5).text_color(t.dim).child(`Agents update live; GitHub every ${st.github?.everyMin ?? 3} minutes${slackOn ? `; Slack every ${every}` : ""}`)))))
-      .child(this.standupFooter(t, button));
+      .when(!this.slackOnly, (el) => el.child(this.standupFooter(t, button)));
   }
 
   standupFooter(t, button) {

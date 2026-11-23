@@ -68,7 +68,8 @@ function readIssue(stdout, id) {
 async function fetchIssue(id) {
   const dir = `${appHome()}/data/cc-claude`;
   await exec("mkdir", ["-p", dir]);
-  const r = await exec(`${home()}/.local/bin/claude`, ["-p", issuePrompt(id), "--model", "haiku", "--tools", "ToolSearch", "--allowedTools", ISSUE_TOOLS.join(","),
+  // Wait for the claude.ai connectors before the turn starts (see cc-status claude()).
+  const r = await exec("/usr/bin/env", ["MCP_CONNECTION_NONBLOCKING=false", `${home()}/.local/bin/claude`, "-p", issuePrompt(id), "--model", "haiku", "--tools", "ToolSearch", "--allowedTools", ISSUE_TOOLS.join(","),
     "--output-format", "stream-json", "--verbose", "--no-session-persistence", "--max-budget-usd", "0.3"], { cwd: dir, timeout: 120_000 });
   try { return readIssue(r.stdout ?? "", id); }
   catch (e) { throw new Error(e.message || (r.stderr ?? "").trim().split("\n")[0].slice(0, 160) || `claude exited ${r.code}`); }
