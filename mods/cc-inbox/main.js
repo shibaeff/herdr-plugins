@@ -21,6 +21,7 @@ function since(ms) {
 const clock = (ms) => new Date(ms).toTimeString().slice(0, 5);
 
 const openUrl = (url) => url && exec("open", [url]);
+const copyText = (text) => exec("sh", ["-c", 'printf %s "$1" | pbcopy', "sh", text]);
 const CLOSED = { you: "done", sweep: "you replied", skipped: "skipped" };
 const slackAction = (op, ids) => setShared("cc.slack.action", { op, ids, at: Date.now() });
 const markRead = (ids) => setShared("cc.github.action", { op: "read", ids, at: Date.now() });
@@ -39,6 +40,7 @@ export default class Inbox extends View {
   init(_props, cx) {
     this.claude = ["claude"];
     this.showTicked = false;
+    this.copied = null; // the row whose link was just copied
     cx.timer.every(60_000, (cx) => cx.notify());
     cx.spawn(async () => {
       const found = (await knownAgents().catch(() => [])).find((a) => a.key === "claude");
@@ -63,7 +65,7 @@ export default class Inbox extends View {
   slackItems() {
     return (shared("cc.slack")?.items ?? []).map((s) => ({
       key: `sl-${s.permalink}`, group: "slack", kind: s.kind === "ask" ? "SLACK" : "FYI", tone: s.kind === "ask" ? "working" : "muted",
-      section: s.urgent || s.due ? 0 : 2, time: s.at, open: () => openUrl(s.permalink), ticked: s.ticked, ask: s.kind === "ask",
+      section: s.urgent || s.due ? 0 : 2, time: s.at, open: () => openUrl(s.permalink), link: s.permalink, ticked: s.ticked, ask: s.kind === "ask",
       title: `${s.from} in ${s.channel}${s.due ? ` · due ${s.due}` : ""}${s.ticked ? ` · ${s.kind === "ask" ? CLOSED[s.by] ?? "done" : "seen"}` : ""}`, body: s.text, permalink: s.permalink,
       // Done: handled, and a standup candidate. Skip: set aside, never in the standup. FYIs are just Seen.
       actions: s.ticked ? [{ label: "Undo", run: () => slackAction("untick", [s.permalink]) }]
@@ -93,7 +95,7 @@ export default class Inbox extends View {
     if (shared("cc.settings")?.slack?.enabled !== false) out.push(...this.slackItems().filter((s) => s.ask && !s.ticked));
     for (const p of gh.prs ?? []) {
       if (p.ci !== "fail") continue;
-      out.push({ key: `ci-${p.url}`, group: "github", section: 1, kind: "CI", tone: "blocked", open: () => openUrl(p.url),
+      out.push({ key: `ci-${p.url}`, group: "github", section: 1, kind: "CI", tone: "blocked", open: () => openUrl(p.url), link: p.url,
         title: `#${p.number} failed: ${p.failed.map((f) => f.name).slice(0, 2).join(", ")}`, body: `${p.spaceName} · ${p.title}`,
         actions: [{ label: "Fix CI", primary: true, run: () => this.fixCi(p) }, { label: "Logs", run: () => openUrl(p.failed[0]?.url ?? p.url) }] });
     }
@@ -101,16 +103,26 @@ export default class Inbox extends View {
     for (const n of gh.notifications ?? []) {
       const [kind, tone, verb] = notifLook(n);
       const where = `${n.repo.split("/").pop()}${n.number ? `#${n.number}` : ""}`;
-      out.push({ key: `gn-${n.id}`, group: "github", section: 1, kind, tone, time: n.at, open: () => openUrl(n.url),
+      out.push({ key: `gn-${n.id}`, group: "github", section: 1, kind, tone, time: n.at, open: () => openUrl(n.url), link: n.url,
         title: n.who ? `${n.who} ${verb} · ${where}` : `New activity · ${where}`,
         body: `${n.title}${n.body ? ` — “${n.body}”` : ""}`,
         actions: [{ label: "Mark read", run: () => markRead([n.id]) }] });
     }
     for (const r of gh.reviews ?? []) {
-      out.push({ key: `rv-${r.url}`, group: "github", section: 1, kind: "PR", tone: "accent", open: () => openUrl(r.url),
+      out.push({ key: `rv-${r.url}`, group: "github", section: 1, kind: "PR", tone: "accent", open: () => openUrl(r.url), link: r.url,
         title: `Review requested: #${r.number}`, body: `${r.repo} · ${r.title}${r.author ? ` · ${r.author}` : ""}`, actions: [] });
     }
     return out;
+  }
+
+  // A row's buttons, plus Copy link when it points somewhere (PR, comment, Slack thread). Shows "Copied" briefly.
+  actionsOf(i) {
+    if (!i.link) return i.actions;
+    return [...i.actions, { label: this.copied === i.key ? "Copied" : "Copy link", run: (cx) => {
+      copyText(i.link);
+      this.copied = i.key;
+      cx.spawn(async (cx) => { await cx.sleep(1500); if (this.copied === i.key) { this.copied = null; cx.notify(); } });
+    } }];
   }
 
   render() {
@@ -136,7 +148,7 @@ export default class Inbox extends View {
     const button = (a, key) => div().id(key).px(9).py(3).rounded(5).text_size(11.5).font_medium().border_1()
       .border_color(a.primary ? t.solid : t.border).bg(a.primary ? t.solid : t.raised).text_color(a.primary ? t.solid_foreground : t.foreground)
       .hover((s) => s.opacity(0.85)).on_mouse_down("left", stop)
-      .on_click((_e, cx) => { cx.stop_propagation(); a.run(); cx.notify(); }).child(a.label);
+      .on_click((_e, cx) => { cx.stop_propagation(); a.run(cx); cx.notify(); }).child(a.label);
 
     const row = (i) => h_flex().id(i.key).w_full().px(14).py(9).gap(10).items_start().border_b(1).border_color(t.border)
       .hover((s) => s.bg(t.hover)).on_click(() => i.open()).opacity(i.ticked ? 0.6 : 1)
@@ -146,7 +158,7 @@ export default class Inbox extends View {
           .child(div().flex_1().min_w(0).truncate().font_medium().child(i.title))
           .child(div().flex_none().text_size(11).text_color(t.dim).child(since(i.time))))
         .when(Boolean(i.body), (el) => el.child(div().text_size(12).text_color(t.muted).child(i.body)))
-        .when(i.actions.length > 0, (el) => el.child(h_flex().mt(4).gap(6).flex_wrap().children(i.actions.map((a, n) => button(a, `${i.key}-b${n}`))))));
+        .when(this.actionsOf(i).length > 0, (el) => el.child(h_flex().mt(4).gap(6).flex_wrap().children(this.actionsOf(i).map((a, n) => button(a, `${i.key}-b${n}`))))));
 
     const heading = (name) => div().px(14).pt(10).pb(4).text_size(11).font_medium().text_color(t.dim).child(name);
     let body;
