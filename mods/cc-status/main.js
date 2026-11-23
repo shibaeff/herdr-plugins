@@ -373,11 +373,12 @@ export default class CcStatus extends View {
   }
 
   // Agent status changes, logged as they happen (render runs on every change to agents()).
-  activityAgents() {
+  activityAgents(cx) {
     if (!this.activityOn()) return;
     const { events, next } = activity.agentChanges(this.agentSnap ?? {}, agents(), panes());
     // The first look only learns who's there, so a reload doesn't log every agent as new.
-    if (this.agentSnap) activity.log(events);
+    // Files and promises only run inside a task, so the write goes through cx.spawn.
+    if (this.agentSnap && events.length) cx.spawn(async () => { await activity.log(events); });
     this.agentSnap = next;
   }
 
@@ -757,7 +758,7 @@ export default class CcStatus extends View {
   }
 
   render(cx) {
-    this.activityAgents();
+    this.activityAgents(cx);
     this.syncSnippets(cx);
     this.syncRequests(cx);
     const t = theme();
