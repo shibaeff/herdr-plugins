@@ -9,7 +9,7 @@ function message(ask, searchSlack) {
   const research = searchSlack
     ? "Read the thread, then search Slack across all channels for an earlier answer before anything else. Then check Linear and this codebase where it helps."
     : "Read the thread, then answer from this codebase and Linear. Don't search the rest of Slack.";
-  return `${ask.from} asked me on Slack (${ask.channel}): "${ask.text}"\n${ask.permalink}\n\n${research}\nDraft a reply I can paste, with links to what you relied on. Don't post, react or send anything in Slack.`;
+  return `${ask.from} asked me on Slack (${ask.channel}): "${ask.text}"\n${ask.permalink ? `${ask.permalink}\n` : "Find the message in Slack first (search for its words).\n"}\n${research}\nDraft a reply I can paste, with links to what you relied on. Don't post, react or send anything in Slack.`;
 }
 
 export default class Handoff extends View {

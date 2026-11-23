@@ -25,6 +25,9 @@ const copyText = (text) => exec("sh", ["-c", 'printf %s "$1" | pbcopy', "sh", te
 const CLOSED = { you: "done", sweep: "you replied", skipped: "skipped" };
 const slackAction = (op, ids) => setShared("cc.slack.action", { op, ids, at: Date.now() });
 const markRead = (ids) => setShared("cc.github.action", { op: "read", ids, at: Date.now() });
+const appAction = (op, ids) => setShared("cc.slackapp.action", { op, ids, at: Date.now() });
+// Notifications carry the workspace but not the channel, so this brings up the Slack app on that workspace.
+const openSlackApp = (team) => exec("open", [team ? `slack://open?team=${team}` : "slack://open"]);
 
 // A GitHub notification's tag, colour and verb: "infraopic replied", "guglez requested changes".
 // On a mention thread, `who` is whoever acted last, which may be a later review rather than the mention itself.
@@ -78,6 +81,22 @@ export default class Inbox extends View {
     }));
   }
 
+  // Live items from the Slack app's notifications (cc-status reads them). One the sweep also found is shown once,
+  // as the sweep's: same message timestamp in its permalink.
+  appItems() {
+    const swept = (shared("cc.slack")?.items ?? []).map((s) => s.permalink ?? "");
+    return (shared("cc.slackapp")?.items ?? [])
+      .filter((x) => !x.ts || !swept.some((p) => p.includes(`p${x.ts.replace(".", "")}`)))
+      .map((x) => ({
+        key: `sa-${x.key}`, group: "slack", kind: "LIVE", tone: "working", section: 2, time: x.at, ticked: x.ticked, live: true,
+        open: () => openSlackApp(x.team),
+        title: `${x.from}${x.channel === "DM" ? " · DM" : ` in ${x.channel}`}${x.ticked ? " · done" : ""}`, body: x.text,
+        actions: x.ticked ? [{ label: "Undo", run: () => appAction("untick", [x.key]) }]
+          : [{ label: "Hand to agent", run: () => this.handToAgent({ from: x.from, channel: x.channel, text: x.text, permalink: "" }) },
+            { label: "Done", primary: true, run: () => appAction("tick", [x.key]) }],
+      }));
+  }
+
   items() {
     const tabs = new Map(spaces().flatMap((s) => s.tabs.map((t) => [t.id, t])));
     const snippets = shared("cc.snippets") ?? {};
@@ -95,6 +114,7 @@ export default class Inbox extends View {
       }
     }
     if (shared("cc.settings")?.slack?.enabled !== false) out.push(...this.slackItems().filter((s) => s.ask && !s.ticked));
+    if (shared("cc.settings")?.slack?.app !== false) out.push(...this.appItems().filter((x) => !x.ticked));
     for (const p of gh.prs ?? []) {
       if (p.ci !== "fail") continue;
       out.push({ key: `ci-${p.url}`, group: "github", section: 1, kind: "CI", tone: "blocked", open: () => openUrl(p.url), link: p.url,
@@ -134,6 +154,7 @@ export default class Inbox extends View {
     const slack = shared("cc.slack") ?? {};
     const st = shared("cc.settings") ?? {};
     const slackOn = st.slack?.enabled !== false, every = st.slack?.everyMin ?? 30;
+    const appOn = st.slack?.app !== false, app = shared("cc.slackapp") ?? {};
     const settings = (p) => setShared("cc.settings.update", { patch: p, at: Date.now() });
     const stop = (_e, cx) => cx.stop_propagation();
 
@@ -164,10 +185,13 @@ export default class Inbox extends View {
 
     const heading = (name) => div().px(14).pt(10).pb(4).text_size(11).font_medium().text_color(t.dim).child(name);
     let body;
-    if (filter === "slack" && slackOn) {
-      const s = this.slackItems();
-      const asks = s.filter((i) => i.ask && !i.ticked), fyi = s.filter((i) => !i.ask && !i.ticked), ticked = s.filter((i) => i.ticked);
+    if (filter === "slack" && (slackOn || appOn)) {
+      const s = slackOn ? this.slackItems() : [];
+      const live = appOn ? this.appItems() : [];
+      const fresh = live.filter((i) => !i.ticked);
+      const asks = s.filter((i) => i.ask && !i.ticked), fyi = s.filter((i) => !i.ask && !i.ticked), ticked = [...s.filter((i) => i.ticked), ...live.filter((i) => i.ticked)];
       body = [
+        ...(fresh.length ? [heading(`FROM THE SLACK APP · ${fresh.length}`), ...fresh.map(row)] : []),
         ...(asks.length ? [heading(`WAITING ON YOU · ${asks.length}`), ...asks.map(row)] : []),
         ...(fyi.length ? [heading(`FYI · ${fyi.length}`), ...fyi.map(row)] : []),
         ...(ticked.length ? [h_flex().px(14).py(10).gap(8).items_center().text_size(12).text_color(t.muted)
@@ -193,10 +217,13 @@ export default class Inbox extends View {
         .child(h_flex().gap(8).items_center()
           .child(div().font_semibold().child(this.slackOnly ? "Slack" : "Inbox"))
           .child(div().text_size(11).text_color(t.dim).child(this.slackOnly
-            ? `${this.slackItems().filter((i) => i.ask && !i.ticked).length} waiting on you`
+            ? `${this.slackItems().filter((i) => i.ask && !i.ticked).length + this.appItems().filter((i) => !i.ticked).length} waiting on you`
             : `${all.length} open`)))
-        .when(!this.slackOnly, (el) => el.child(h_flex().gap(4).flex_wrap().children(FILTERS.filter((f) => f.id !== "slack" || slackOn).map(chip)))))
+        .when(!this.slackOnly, (el) => el.child(h_flex().gap(4).flex_wrap().children(FILTERS.filter((f) => f.id !== "slack" || slackOn || appOn).map(chip)))))
       // Slack not connected: say how to connect it, or turn the sweep off, instead of a red error.
+      .when(appOn && Boolean(app.error) && (filter === "all" || filter === "slack"), (el) => el.child(div().flex_none().px(14).py(6)
+        .border_b(1).border_color(t.border).bg(t.raised).text_size(11.5).text_color(t.blocked)
+        .child(`Slack app feed: ${app.error}. System Settings → Privacy & Security → Full Disk Access → Herdr, then restart Herdr.`)))
       .when(Boolean(shared("cc.github")?.notificationsError) && (filter === "all" || filter === "github"), (el) => el.child(div().flex_none().px(14).py(6)
         .border_b(1).border_color(t.border).bg(t.raised).text_size(11.5).text_color(t.blocked).truncate()
         .child(`Couldn't read GitHub notifications: ${shared("cc.github").notificationsError}`)))

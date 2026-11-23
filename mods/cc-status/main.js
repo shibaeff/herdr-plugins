@@ -8,6 +8,7 @@ import { STANDUP_TIMEOUT, STANDUP_TOOLS, STANDUP_SCHEMA, ASK_SCHEMA, windowFor, 
   toBullets, toText, remember, applyEdit, askPrompt, applyAsk } from "./standup.js";
 import * as fs from "fs/promises";
 import { USAGE_EVERY, claudeUsage, codexUsage, backoff } from "./usage.js";
+import { SLACKAPP_EVERY, loadAppState, saveAppState, poll, applyApp, publishApp } from "./slackapp.js";
 import { withDefaults, patch, loadSettings, saveSettings, inHours } from "./settings.js";
 
 // Claude Code lists connectors that need a sign-in here: a free way to know Linear or Slack isn't connected
@@ -101,10 +102,13 @@ export default class CcStatus extends View {
     this.linearBusy = false;
     this.handled = { request: shared("cc.linear.request") ?? 0, move: shared("cc.linear.move")?.at ?? 0,
       slackRequest: shared("cc.slack.request") ?? 0, slackAction: shared("cc.slack.action")?.at ?? 0,
-      githubAction: shared("cc.github.action")?.at ?? 0 };
+      githubAction: shared("cc.github.action")?.at ?? 0, appAction: shared("cc.slackapp.action")?.at ?? 0 };
     this.slackBusy = false;
     this.slackPath = `${appHome()}/data/cc-slack/state.json`;
     this.slackQueue = Promise.resolve();
+    this.appPath = `${appHome()}/data/cc-slack/app.json`;
+    this.appQueue = Promise.resolve();
+    this.appBusy = false;
     this.standupPath = `${appHome()}/data/cc-standup/standup.json`;
     this.standupBusy = false;
     this.handled.standup = shared("cc.standup.request") ?? 0;
@@ -124,8 +128,11 @@ export default class CcStatus extends View {
       if (!this.su.bullets && this.su.text) this.su.bullets = toBullets(this.su.text);
       this.publishStandup({ running: false, asking: false });
       this.tick(cx);
+      this.slackApp(cx);
     });
     cx.timer.every(60_000, (cx) => this.tick(cx));
+    // The Slack app's notifications: free, so every 20 seconds (macOS drops them once cleared).
+    cx.timer.every(SLACKAPP_EVERY, (cx) => this.slackApp(cx));
     // `herdr-app do cc-status.linear` / `cc-status.github`: check now.
     cx.spawn(async (cx) => {
       for (;;) {
@@ -330,6 +337,38 @@ export default class CcStatus extends View {
     ], { cwd: dir, timeout }));
   }
 
+  // Reads, changes and writes the Slack app feed one at a time; call from inside a cx.spawn task.
+  async appChange(change) {
+    const before = this.appQueue;
+    let release;
+    this.appQueue = new Promise((r) => { release = r; });
+    await before;
+    try {
+      const state = await loadAppState(this.appPath);
+      const status = (await change(state)) ?? {};
+      await saveAppState(this.appPath, state);
+      const next = publishApp(state, { ...(shared("cc.slackapp") ?? {}), ...status });
+      if (!same(next, shared("cc.slackapp"))) setShared("cc.slackapp", next);
+    } catch (e) {
+      console.log("cc-status slack app:", e);
+    } finally {
+      release();
+    }
+  }
+
+  slackApp(cx) {
+    if (this.settings.demo || this.settings.slack.app === false || this.appBusy) return;
+    this.appBusy = true;
+    cx.spawn(async (cx) => {
+      await this.appChange(async (st) => {
+        try { await poll(st, Date.now()); return { error: null, at: Date.now() }; }
+        catch (e) { return { error: String(e?.message ?? e).slice(0, 160) }; }
+      });
+      this.appBusy = false;
+      cx.notify();
+    });
+  }
+
   // Reads, changes and writes the Slack state one at a time, so a tick never races a sweep.
   // Awaited from inside a cx.spawn task: Herdr calls like setShared need one.
   async slackChange(change) {
@@ -457,6 +496,11 @@ export default class CcStatus extends View {
     if (sua?.at > this.handled.standupAction) { this.handled.standupAction = sua.at; this.standupAction(cx, sua); }
     const sreq = shared("cc.slack.request") ?? 0, sact = shared("cc.slack.action");
     if (sreq > this.handled.slackRequest) { this.handled.slackRequest = sreq; this.slack(cx, true); }
+    const aact = shared("cc.slackapp.action");
+    if (aact?.at > this.handled.appAction) {
+      this.handled.appAction = aact.at;
+      cx.spawn(async () => { await this.appChange((st) => { applyApp(st, aact, Date.now()); }); });
+    }
     if (sact?.at > this.handled.slackAction) {
       this.handled.slackAction = sact.at;
       cx.spawn(async () => { await this.slackChange((st) => { apply(st, sact, Date.now()); }); });

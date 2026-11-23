@@ -77,6 +77,14 @@ schedule in settings, or when you click refresh. Moving an issue to In
 Progress is a second run with Linear's update tools, only when you tick it in Start from issue. The runs work in
 `~/.config/herdr-app/data/cc-claude` and keep no session.
 
+Slack app feed (free): cc-status reads the notifications the macOS Slack app posts from the macOS notification
+database every 20 seconds (`sqlite3` read-only + `plutil`), keeps them in `data/cc-slack/app.json` (macOS deletes
+them once cleared) and shows them as LIVE rows in the Slack panel and Inbox, with Hand to agent and Done. It needs Full
+Disk Access for Herdr.app (System Settings → Privacy & Security); terminals run under Herdr Core and don't get it.
+It sees only what Slack notifies (not while Slack is focused, muted, or silenced by Focus), and notifications carry no
+channel ID, so a click opens the Slack app on the workspace rather than the message. A private macOS format: if it
+changes, the feed stops adding items. Toggle: Settings → Slack app feed.
+
 Headless runs start with `MCP_CONNECTION_NONBLOCKING=false`: without it `claude -p` begins before the claude.ai
 connectors connect and sees no Slack or Linear tools, so every run reports "not connected".
 

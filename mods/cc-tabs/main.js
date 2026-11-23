@@ -33,6 +33,7 @@ const inboxCount = () =>
   (shared("cc.github")?.prs ?? []).filter((p) => p.ci === "fail").length +
   (shared("cc.github")?.reviews ?? []).length +
   (shared("cc.github")?.notifications ?? []).length +
+  (shared("cc.settings")?.slack?.app === false ? 0 : (shared("cc.slackapp")?.items ?? []).filter((x) => !x.ticked).length) +
   (shared("cc.settings")?.slack?.enabled === false ? 0 : (shared("cc.slack")?.items ?? []).filter((s) => s.kind === "ask" && !s.ticked).length);
 
 function togglePanel(id) {
@@ -161,7 +162,7 @@ export default class Tabs extends View {
       .child(button("tab-new", "+", () => openOverlay({ mod: "new-menu", kind: "popup", width: 250, height: 512 })))
       // "I don't use Linear" (settings) hides its button; Slack shows only while its sweep is on.
       .children(PANELS.filter((p) => (p.id !== "linear" || shared("cc.settings")?.linear?.enabled !== false)
-        && (p.id !== "slack" || shared("cc.settings")?.slack?.enabled === true)).map(panelButton))
+        && (p.id !== "slack" || shared("cc.settings")?.slack?.enabled === true || shared("cc.settings")?.slack?.app !== false)).map(panelButton))
       .when(w?.buttons, el => el.child(button("minimize", w.platform === "windows" ? svg("mods/tabs/win-min.svg").size(16) : "−", () => run("window.minimize")))
         .child(button("maximize", w.platform === "windows" ? svg(`mods/tabs/${w.maximized ? "win-restore" : "win-max"}.svg`).size(16) : "□", () => run("window.maximize")))
         .child(button("close-window", w.platform === "windows" ? svg("mods/tabs/win-close.svg").size(16) : svg("mods/pane/close.svg").size(13), () => run("window.close"))));

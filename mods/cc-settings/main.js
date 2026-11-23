@@ -92,6 +92,7 @@ export default class Settings extends View {
           row("Between", hours("slack")),
           row("Model", seg("sl-model", MODELS, d.slack.model, (v) => { d.slack.model = v; }), "Sonnet judges asks better"),
         ]))
+        .child(card("sa", "Slack app feed", "Live DMs and mentions from the Slack app's macOS notifications, every 20 seconds. Free; needs Full Disk Access for Herdr.", d.slack.app !== false, () => { d.slack.app = d.slack.app === false; }, []))
         .child(card("su", "Standup draft", "\"What did you accomplish?\" from commits, PRs, task notes, Linear and Slack.", d.standup.enabled, () => { d.standup.enabled = !d.standup.enabled; }, [
           row("Write at", h_flex().gap(4).flex_wrap().children(STANDUP_TIMES.map((h) => {
             const on = d.standup.times.includes(h);
