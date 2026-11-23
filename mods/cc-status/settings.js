@@ -6,7 +6,7 @@ import * as fs from "fs/promises";
 
 export const DEFAULTS = {
   repoRoots: null, // null: the parent folders of the repos open in Herdr
-  github: { enabled: true, everyMin: 3, reviews: "direct", notifications: true },
+  github: { enabled: true, everyMin: 3, reviews: "direct", notifications: true, hideRepos: [] }, // hideRepos: "owner/name" substrings
   linear: { enabled: true, everyMin: 15, hours: [7, 22], model: "haiku" },
   slack: { enabled: false, everyMin: 60, hours: [9, 19], model: "sonnet", app: true }, // app: the Slack app feed (free)
   standup: { enabled: false, times: [23], weekdaysOnly: true, cutover: 18, model: "sonnet" },

@@ -656,7 +656,7 @@ export default class CcStatus extends View {
         if (forceReviews || Date.now() - this.reviewsAt >= REVIEWS_EVERY) {
           // Direct requests by default: team requests (review-requested) can flood the list.
           const scope = this.settings.github.reviews === "all" ? "--review-requested=@me" : "user-review-requested:@me";
-          const r = await exec("gh", ["search", "prs", scope, "--state=open", "--json", "number,title,url,repository,author", "--limit", "20"], { timeout: 20_000 });
+          const r = await exec("gh", ["search", "prs", scope, "--state=open", "--json", "number,title,url,repository,author", "--limit", "50"], { timeout: 20_000 });
           if (r.code !== 0) throw new Error(r.stderr.trim().split("\n")[0] || "gh search failed");
           reviews = JSON.parse(r.stdout).map((x) => ({ number: x.number, title: x.title, url: x.url, repo: x.repository?.nameWithOwner ?? "", author: x.author?.login ?? "" }));
           this.reviewsAt = Date.now();
@@ -665,7 +665,16 @@ export default class CcStatus extends View {
         let notifications = prev.notifications ?? [], notificationsError = null;
         try { notifications = (await this.notifications()) ?? []; }
         catch (e) { notificationsError = String(e?.message ?? e).slice(0, 120); }
-        const next = { prs, reviews, notifications, notificationsError };
+        // Repos hidden in settings (github.hideRepos, matched as case-insensitive substrings of "owner/name").
+        const hidden = (this.settings.github.hideRepos ?? []).map((h) => String(h).trim().toLowerCase()).filter(Boolean);
+        const shown = (repo) => !hidden.some((h) => String(repo ?? "").toLowerCase().includes(h));
+        const repoOfUrl = (url) => String(url ?? "").match(/github\.com\/([^/]+\/[^/]+)/)?.[1] ?? "";
+        const next = {
+          prs: prs.filter((p) => shown(repoOfUrl(p.url))),
+          reviews: reviews.filter((r) => shown(r.repo)).slice(0, 20),
+          notifications: notifications.filter((n) => shown(n.repo)),
+          notificationsError,
+        };
         if (!same(next, { prs: prev.prs, reviews: prev.reviews, notifications: prev.notifications, notificationsError: prev.notificationsError ?? null })) setShared("cc.github", next);
         this.error = null;
       } catch (e) {

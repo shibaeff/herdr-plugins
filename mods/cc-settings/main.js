@@ -29,13 +29,14 @@ export default class Settings extends View {
   init(_props, cx) {
     const s = shared("cc.settings");
     this.draft = s ? clone({ repoRoots: s.repoRoots, github: s.github, linear: s.linear, slack: s.slack, standup: s.standup, usage: s.usage }) : null;
+    this.hide = InputState.new({ value: (s?.github?.hideRepos ?? []).join(", "), placeholder: "e.g. lodestar, ChainSafe/old-repo" });
     this.roots = InputState.new({ value: (s?.repoRoots ?? []).map(tilde).join(", "), placeholder: "Leave empty: the folders of the repos open in Herdr" });
     this.handle = cx.focus_handle();
   }
 
   save() {
     const roots = this.roots.value().split(",").map(untilde).filter(Boolean);
-    setShared("cc.settings.update", { patch: { ...this.draft, repoRoots: roots.length ? roots : null }, at: Date.now() });
+    setShared("cc.settings.update", { patch: { ...this.draft, repoRoots: roots.length ? roots : null, github: { ...this.draft.github, hideRepos: this.hide.value().split(",").map((x) => x.trim()).filter(Boolean) } }, at: Date.now() });
     closeOverlay(props()?.overlay);
   }
 
@@ -80,6 +81,7 @@ export default class Settings extends View {
           row("Mentions and replies", toggle("gh-notif", d.github.notifications !== false, () => { d.github.notifications = d.github.notifications === false; }),
             "Unread GitHub notifications; Mark read clears them on GitHub"),
           row("Check every", seg("gh-every", [3, 5, 10].map((m) => ({ id: m, label: `${m} min` })), d.github.everyMin, (v) => { d.github.everyMin = v; })),
+          row("Hide repos", Input.new(this.hide).h(30).px(10).rounded(7).border_1().border_color(t.input).bg(t.popover).text_size(12.5), "Comma separated; part of owner/name"),
           row("Review requests", seg("gh-rev", [{ id: "direct", label: "Asked of me" }, { id: "all", label: "Including my teams" }], d.github.reviews, (v) => { d.github.reviews = v; })),
         ]))
         .child(card("lin", "Linear", "Your open issues, through Claude's Linear connector.", d.linear.enabled, () => { d.linear.enabled = !d.linear.enabled; }, [
