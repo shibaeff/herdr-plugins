@@ -3,7 +3,7 @@
 
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { agents, spaces, panes, shared, setShared, theme, run, exec, knownAgents, openOverlay, props } from "herdr";
+import { agents, spaces, panes, shared, setShared, theme, run, exec, knownAgents, openOverlay, props, home, notify } from "herdr";
 
 const FILTERS = [
   { id: "all", label: "All" },
@@ -42,6 +42,7 @@ function notifLook(n) {
 export default class Inbox extends View {
   init(_props, cx) {
     this.claude = ["claude"];
+    try { this.aiReviews = JSON.parse(localStorage.getItem("aiReviews") ?? "{}"); } catch { this.aiReviews = {}; } // PR url → started at
     this.showTicked = false;
     this.copied = null; // the row whose link was just copied
     cx.timer.every(60_000, (cx) => cx.notify());
@@ -58,6 +59,25 @@ export default class Inbox extends View {
   fixCi(p) {
     const failed = p.failed[0];
     run("tab.new", { space: p.space, name: `fix CI #${p.number}`, folder: p.repo, argv: this.claude, task: `/fix-ci ${failed?.url ?? p.url}` });
+  }
+
+  // AI review: Claude Code's /code-review on the PR with --comment, which posts its findings as inline review
+  // comments. It runs in a new background tab of a local space, in ~/.herdr/reviews (one folder, trusted once), so it
+  // never touches your checkouts. Claude's own permission prompts still apply: the tab shows as blocked in the Inbox
+  // when it wants approval (for example before it posts).
+  aiReview(r, cx) {
+    const spacesHere = spaces().filter((s) => !s.machine);
+    const space = spacesHere.find((s) => s.active) ?? spacesHere[0];
+    if (!space) { notify({ title: "No local space for the AI review", body: "Open a space on this computer first.", level: "warning" }); return; }
+    cx.spawn(async (cx) => {
+      const folder = `${home()}/.herdr/reviews`;
+      await exec("mkdir", ["-p", folder]).catch(() => null);
+      run("tab.new", { space: space.id, name: `AI review #${r.number}`, folder, argv: this.claude, task: `/code-review ${r.url} --comment`, focus: false });
+      this.aiReviews = { ...Object.fromEntries(Object.entries(this.aiReviews).filter(([, at]) => Date.now() - at < 30 * 86_400_000)), [r.url]: Date.now() };
+      try { localStorage.setItem("aiReviews", JSON.stringify(this.aiReviews)); } catch { /* per-copy convenience only */ }
+      notify({ title: `AI review started: #${r.number}`, body: `${r.repo} · in a new tab of ${space.name}`, level: "info", timeout: 6000 });
+      cx.notify();
+    });
   }
 
   // A research agent in the shown space: it looks for the answer everywhere and drafts a reply, never posts.
@@ -133,7 +153,9 @@ export default class Inbox extends View {
     }
     for (const r of gh.reviews ?? []) {
       out.push({ key: `rv-${r.url}`, group: "github", section: 1, kind: "PR", tone: "accent", open: () => openUrl(r.url), link: r.url,
-        title: `Review requested: #${r.number}`, body: `${r.repo} · ${r.title}${r.author ? ` · ${r.author}` : ""}`, actions: [] });
+        title: `Review requested: #${r.number}${this.aiReviews[r.url] ? " · AI review started" : ""}`,
+        body: `${r.repo} · ${r.title}${r.author ? ` · ${r.author}` : ""}`,
+        actions: [{ label: this.aiReviews[r.url] ? "AI review again" : "AI review", primary: !this.aiReviews[r.url], run: (cx) => this.aiReview(r, cx) }] });
     }
     return out;
   }
