@@ -99,6 +99,8 @@ export default class CcStatus extends View {
     this.notifCache = new Map(); // "<thread id>|<updated_at>" → its latest comment or review (or null)
     this.notifRead = new Set();  // threads marked read here, kept out until GitHub stops listing them
     this.mergedPrs = new Set();  // PR API URLs known to be merged (merging is final, so never asked again)
+    this.reviewsReadPath = `${appHome()}/data/cc-github/reviews-read.json`;
+    this.reviewsRead = null;     // review requests marked read: PR url → its updatedAt then (back when the PR changes)
     this.ghLogin = null;
     this.linearBusy = false;
     this.handled = { request: shared("cc.linear.request") ?? 0, move: shared("cc.linear.move")?.at ?? 0,
@@ -588,8 +590,34 @@ export default class CcStatus extends View {
         const gh = shared("cc.github") ?? {};
         setShared("cc.github", { ...gh, notifications: (gh.notifications ?? []).filter((n) => !ids.has(n.id)) });
         for (const id of ids) await exec("gh", ["api", "-X", "PATCH", `notifications/threads/${id}`], { timeout: 20_000 }).catch(() => null);
+        if (gact.reviews?.length) await this.markReviewsRead(gact.reviews);
       });
     }
+  }
+
+  // Review requests have no read state on GitHub, so Mark read hides the row here until the PR changes (new push,
+  // comment, re-request), and marks read any GitHub notification thread about that PR.
+  async loadReviewsRead() {
+    if (this.reviewsRead) return this.reviewsRead;
+    try { this.reviewsRead = JSON.parse(await fs.readFile(this.reviewsReadPath, "utf8")); } catch { this.reviewsRead = {}; }
+    return this.reviewsRead;
+  }
+  async saveReviewsRead() {
+    await fs.mkdir(this.reviewsReadPath.replace(/\/[^/]+$/, ""), { recursive: true });
+    await fs.writeFile(this.reviewsReadPath, JSON.stringify(this.reviewsRead, null, 2));
+  }
+  async markReviewsRead(reviews) {
+    const read = await this.loadReviewsRead();
+    for (const r of reviews) read[r.url] = r.updatedAt ?? "";
+    const urls = new Set(reviews.map((r) => r.url));
+    const gh = shared("cc.github") ?? {};
+    setShared("cc.github", { ...gh, reviews: (gh.reviews ?? []).filter((r) => !urls.has(r.url)) });
+    await this.saveReviewsRead();
+    const r = await exec("gh", ["api", "notifications?per_page=50"], { timeout: 20_000 }).catch(() => null);
+    let list = [];
+    try { list = JSON.parse(r?.stdout ?? "[]"); } catch { /* none */ }
+    const apiUrls = new Set([...urls].map((u) => u.replace("https://github.com/", "https://api.github.com/repos/").replace("/pull/", "/pulls/")));
+    for (const n of list) if (apiUrls.has(n.subject?.url)) await exec("gh", ["api", "-X", "PATCH", `notifications/threads/${n.id}`], { timeout: 20_000 }).catch(() => null);
   }
 
   // Unread GitHub notifications that are about you, each with who answered last and what they said.
@@ -697,14 +725,15 @@ export default class CcStatus extends View {
           if (pr.state !== "OPEN") continue;
           prs.push({ ...t, number: pr.number, title: pr.title, url: pr.url, draft: pr.isDraft, review: pr.reviewDecision, ...ciState(pr.statusCheckRollup) });
         }
-        let reviews = prev.reviews ?? [];
+        let reviews = prev.reviews ?? [], fetchedReviews = false;
         if (forceReviews || Date.now() - this.reviewsAt >= REVIEWS_EVERY) {
           // Direct requests by default: team requests (review-requested) can flood the list.
           const scope = this.settings.github.reviews === "all" ? "--review-requested=@me" : "user-review-requested:@me";
-          const r = await exec("gh", ["search", "prs", scope, "--state=open", "--json", "number,title,url,repository,author", "--limit", "50"], { timeout: 20_000 });
+          const r = await exec("gh", ["search", "prs", scope, "--state=open", "--json", "number,title,url,repository,author,updatedAt", "--limit", "50"], { timeout: 20_000 });
           if (r.code !== 0) throw new Error(r.stderr.trim().split("\n")[0] || "gh search failed");
-          reviews = JSON.parse(r.stdout).map((x) => ({ number: x.number, title: x.title, url: x.url, repo: x.repository?.nameWithOwner ?? "", author: x.author?.login ?? "" }));
+          reviews = JSON.parse(r.stdout).map((x) => ({ number: x.number, title: x.title, url: x.url, repo: x.repository?.nameWithOwner ?? "", author: x.author?.login ?? "", updatedAt: x.updatedAt ?? "" }));
           this.reviewsAt = Date.now();
+          fetchedReviews = true;
         }
         // A failed notifications read keeps the last list and says why; PRs and reviews still update.
         let notifications = prev.notifications ?? [], notificationsError = null;
@@ -714,9 +743,17 @@ export default class CcStatus extends View {
         const hidden = (this.settings.github.hideRepos ?? []).map((h) => String(h).trim().toLowerCase()).filter(Boolean);
         const shown = (repo) => !hidden.some((h) => String(repo ?? "").toLowerCase().includes(h));
         const repoOfUrl = (url) => String(url ?? "").match(/github\.com\/([^/]+\/[^/]+)/)?.[1] ?? "";
+        // Marked-read review requests: forget PRs no longer requested (only after a fresh search, which is complete).
+        const read = await this.loadReviewsRead();
+        if (fetchedReviews) {
+          const open = new Set(reviews.map((r) => r.url));
+          const gone = Object.keys(read).filter((url) => !open.has(url));
+          for (const url of gone) delete read[url];
+          if (gone.length) await this.saveReviewsRead();
+        }
         const next = {
           prs: prs.filter((p) => shown(repoOfUrl(p.url))),
-          reviews: reviews.filter((r) => shown(r.repo)).slice(0, 20),
+          reviews: reviews.filter((r) => shown(r.repo) && read[r.url] !== (r.updatedAt ?? "")).slice(0, 20),
           notifications: notifications.filter((n) => shown(n.repo)),
           notificationsError,
         };

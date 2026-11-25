@@ -71,6 +71,10 @@ Code's `/code-review <PR url> --comment`, which reviews the PR and posts its fin
 in `~/.herdr/reviews` (one folder, trusted once), never in your checkouts; Claude's permission prompts still apply, and
 the tab shows in the Inbox while it waits on you. Started reviews are marked on the row.
 
+Review-request rows also have **Mark read**. GitHub has no read state for a review request, so the row is hidden
+locally (`data/cc-github/reviews-read.json`) until the PR changes (a push, comment or re-request brings it back), and
+any GitHub notification about that PR is marked read too.
+
 Mentions and replies: on the same schedule, `gh api notifications?participating=true` lists unread threads where you
 were @-mentioned (or your team), assigned, or someone answered on a PR or issue you opened or commented on. Each row
 shows who acted last and what they said (one `gh api` call per new comment or review, cached). Review requests,

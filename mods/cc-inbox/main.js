@@ -25,6 +25,8 @@ const copyText = (text) => exec("sh", ["-c", 'printf %s "$1" | pbcopy', "sh", te
 const CLOSED = { you: "done", sweep: "you replied", skipped: "skipped" };
 const slackAction = (op, ids) => setShared("cc.slack.action", { op, ids, at: Date.now() });
 const markRead = (ids) => setShared("cc.github.action", { op: "read", ids, at: Date.now() });
+// Review requests: hidden until the PR changes; cc-status also marks read any GitHub notification about the PR.
+const markReviewRead = (r) => setShared("cc.github.action", { op: "read", ids: [], reviews: [{ url: r.url, updatedAt: r.updatedAt ?? "" }], at: Date.now() });
 const appAction = (op, ids) => setShared("cc.slackapp.action", { op, ids, at: Date.now() });
 // Notifications carry the workspace but not the channel, so this brings up the Slack app on that workspace.
 const openSlackApp = (team) => exec("open", [team ? `slack://open?team=${team}` : "slack://open"]);
@@ -155,7 +157,7 @@ export default class Inbox extends View {
       out.push({ key: `rv-${r.url}`, group: "github", section: 1, kind: "PR", tone: "accent", open: () => openUrl(r.url), link: r.url,
         title: `Review requested: #${r.number}${this.aiReviews[r.url] ? " · AI review started" : ""}`,
         body: `${r.repo} · ${r.title}${r.author ? ` · ${r.author}` : ""}`,
-        actions: [{ label: this.aiReviews[r.url] ? "AI review again" : "AI review", primary: !this.aiReviews[r.url], run: (cx) => this.aiReview(r, cx) }] });
+        actions: [{ label: this.aiReviews[r.url] ? "AI review again" : "AI review", primary: !this.aiReviews[r.url], run: (cx) => this.aiReview(r, cx) }, { label: "Mark read", run: () => markReviewRead(r) }] });
     }
     return out;
   }
